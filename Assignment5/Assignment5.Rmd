@@ -1,0 +1,329 @@
+---
+title: "CGS698C - Assignment 5"
+author: "Sahil Tomar (210898)"
+date: "2024-07-11"
+output:
+  html_document:
+    mathjax: "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(reshape2)
+library(flextable)
+library(truncnorm)
+library(dplyr)
+library(brms)
+library(bayesplot)
+knitr::opts_chunk$set(fig.width=4, fig.height=3)
+```
+
+## Part 1 - Information-theoretic measures and cross-validation
+
+We are given:
+
+-   the data : $y = \{10, 15, 15, 14, 14, 14, 13, 11, 12, 16\}$
+
+```{r}
+data_obs <- c(10, 15, 15, 14, 14, 14, 13, 11, 12, 16)
+```
+
+### Exercise 1.1 : Graph the posterior distribution for each model
+
+**Model 1**
+
+-   the likelihood assumption : $y_i$ \~ $Binomial(N=20, \theta)$
+
+-   The prior assumption : $\theta$ \~ $Beta(6,6)$
+
+Graphing the posterior distribution of $\theta$ :
+
+```{r}
+alpha_prime_1 <- 6 + sum(data_obs)
+beta_prime_1 <- 6 + sum(20 - data_obs)
+print(paste("( ", alpha_prime_1, "," , beta_prime_1, ") "))
+```
+
+-   So, Analytically Derived Posterior Distribution : $\theta | y$ \~ $Beta(140,72)$
+
+```{r}
+theta_values <- seq(0, 1, length.out = 1000)
+
+posterior_density <- dbeta(theta_values, alpha_prime_1, beta_prime_1)
+
+posterior_df_1 <- data.frame(theta = theta_values, density = posterior_density)
+
+ggplot(posterior_df_1, aes(x = theta, y = density)) +
+  geom_line(color = "skyblue") +
+  labs(title = "Posterior Density of θ",
+       x = "θ",
+       y = "Density") +
+  theme_minimal()
+```
+
+**Model 2**
+
+-   the likelihood assumption : $y_i$ \~ $Binomial(N=20, \theta)$
+
+-   The prior assumption : $\theta$ \~ $Beta(20,60)$
+
+Graphing the posterior distribution of $\theta$ :
+
+```{r}
+alpha_prime_2 <- 20 + sum(data_obs)
+beta_prime_2 <- 60 + sum(20 - data_obs)
+print(paste("( ", alpha_prime_2, "," , beta_prime_2, ") "))
+```
+
+-   So, Analytically Derived Posterior Distribution : $\theta | y$ \~ $Beta(154,126)$
+
+```{r}
+theta_values <- seq(0, 1, length.out = 1000)
+
+posterior_density <- dbeta(theta_values, alpha_prime_2, beta_prime_2)
+
+posterior_df_2 <- data.frame(theta = theta_values, density = posterior_density)
+
+ggplot(posterior_df_2, aes(x = theta, y = density)) +
+  geom_line(color = "skyblue") +
+  labs(title = "Posterior Density of θ",
+       x = "θ",
+       y = "Density") +
+  theme_minimal()
+```
+
+### Exercise 1.2 : Compute log pointwise predictive density (lppd) for each model
+
+**Model 1**
+
+```{r}
+lppd_m1 <- 0
+for (i in 1:length(data_obs))
+{
+  sample_theta <- rbeta(1000, alpha_prime_1, beta_prime_1)
+  lpd_i <- log(mean(dbinom(data_obs[i], 20, sample_theta)))
+  lppd_m1 <- lppd_m1 + lpd_i
+}
+
+print(paste("log pointwise predictive density (lppd) for Model 1: ", lppd_m1))
+```
+
+**Model 2**
+
+```{r}
+lppd_m2 <- 0
+for (i in 1:length(data_obs))
+{
+  sample_theta <- rbeta(1000, alpha_prime_2, beta_prime_2)
+  lpd_i <- log(mean(dbinom(data_obs[i], 20, sample_theta)))
+  lppd_m2 <- lppd_m2 + lpd_i
+}
+
+print(paste("log pointwise predictive density (lppd) for Model 2: ", lppd_m2))
+```
+
+### Exercise 1.3 : Calculate in-sample deviance for each model from the log point-wise predictive density (lppd)
+
+**Model 1**
+
+```{r}
+print(paste("In-sample Deviance for Model 1: ", -2*lppd_m1))
+```
+
+**Model 2**
+
+```{r}
+print(paste("In-sample Deviance for Model 2: ", -2*lppd_m2))
+```
+
+#### Why is it called in-sample ?
+
+The in-sample deviance is a measure of how well the model fits the observed data, calculated using the log point-wise predictive density (lppd). It is called "in-sample" because it is based on the same data that was used to fit the model (i.e., the data points $y_i$).
+
+
+### Exercise 1.4 : Based on in-sample deviance, which model is a better fit to the data?
+
+Since Model 1 has a lower in-sample deviance (40.80) compared to Model 2 (51.82), we can conclude that Model 1 is a better fit to the data.
+This suggests that the $Beta(6,6)$ prior for $\theta$ in Model 1 is more appropriate for this dataset than the $Beta(20,60)$ prior in Model 2.
+
+
+We are given:
+
+-   the new data : $y_{new} = \{5, 6, 10, 8, 9\}$
+
+```{r}
+data_new <- c(5, 6, 10, 8, 9)
+```
+
+### Exercise 1.5 : Calculate out-of-sample deviance now to compare your models.
+
+**Model 1**
+
+```{r}
+lppd_new_m1 <- 0
+for (i in 1:length(data_new))
+{
+  sample_theta <- rbeta(1000, alpha_prime_1, beta_prime_1)
+  lpd_i <- log(mean(dbinom(data_new[i], 20, sample_theta)))
+  lppd_new_m1 <- lppd_new_m1 + lpd_i
+}
+
+print(paste("Out-of-sample Deviance for Model 1: ", -2*lppd_new_m1))
+```
+
+**Model 2**
+
+```{r}
+lppd_new_m2 <- 0
+for (i in 1:length(data_new))
+{
+  sample_theta <- rbeta(1000, alpha_prime_2, beta_prime_2)
+  lpd_i <- log(mean(dbinom(data_new[i], 20, sample_theta)))
+  lppd_new_m2 <- lppd_new_m2 + lpd_i
+}
+
+print(paste("Out-of-sample Deviance for Model 2: ", -2*lppd_new_m2))
+```
+
+Since Model 2 has a lower out-of-sample deviance (31.58) compared to Model 1 (50.27), it indicates that Model 2 is better at predicting new, unseen data despite having a higher in-sample deviance.
+
+This suggests that while Model 1 may overfit the data, Model 2 provides a more robust and generalizable model for predicting new data. 
+
+
+### Exercise 1.6 : Perform leave-one-out cross-validation (LOO-CV) to compare model 1 and model 2
+
+**Model 1**
+
+```{r}
+elppd_model_1 <- 0
+
+for (i in 1:length(data_obs)) {
+  y_train <- data_obs[-i]
+  y_test <- data_obs[i]
+
+  samples_model_1 <- rbeta(1000, alpha_prime_1, beta_prime_1)
+  
+  lpd_1 <- log(mean(dbinom(y_test, size = 20, prob = samples_model_1)))
+  
+  elppd_model_1 <- elppd_model_1 + lpd_1
+}
+
+print(paste("ELPPD for Model 1:", elppd_model_1))
+
+print(paste("In-sample Deviance for Model 1 (LOO-CV):", -2*elppd_model_1))
+```
+
+**Model 2**
+
+```{r}
+elppd_model_2 <- 0
+
+for (i in 1:length(data_obs)) {
+  y_train <- data_obs[-i]
+  y_test <- data_obs[i]
+
+  samples_model_2 <- rbeta(1000, alpha_prime_2, beta_prime_2)
+  
+  lpd_2 <- log(mean(dbinom(y_test, size = 20, prob = samples_model_2)))
+  
+  elppd_model_2 <- elppd_model_2 + lpd_2
+}
+
+print(paste("ELPPD for Model 1:", elppd_model_2))
+
+print(paste("In-sample Deviance for Model 1 (LOO-CV):", -2*elppd_model_2))
+```
+
+Based on the results obtained from leave-one-out cross-validation (LOO-CV), Model 1 shows better predictive performance compared to Model 2.
+
+
+## Part 2 - Marginal likelihood and prior sensitivity
+
+We are given:
+
+-   The model's likelihood assumption: $y_i$ ~ $Binomial(N, \theta)$
+
+-   Prior assumptions: $\theta$ ~ $Beta(a, b)$
+
+-   Marginal Likelihood - $ML(n, k, a, b) =$ $ ^{n}C_k \frac{(k+a-1)! (n-k+b-1)!}{(n+a+b-1)!}$
+
+### Exercise 2.1 : Calculate Marginal Likelihood of the models having following priors
+
+-   $k = 2, N = 10$
+
+-   List of Prior Assumptions -${Beta(0.1, 0.4), Beta(1,1), Beta(2,6), Beta(6,2), Beta(20,60), Beta(60,20)}$
+
+```{r}
+ML_binomial <- function(k,n,a,b){
+ML <- (factorial(n)/(factorial(k)*factorial(n-k)))*(
+             factorial(k+a-1)*factorial(n-k+b-1)/factorial(n+a+b-1))
+           ML
+}
+
+k <- 2
+n <- 10
+
+alphas <- c(0.1, 1, 2, 6, 20, 60)
+betas <- c(0.4, 1, 6, 2, 60, 20)
+```
+
+Marginal Likelihoods for all given priors - 
+
+```{r}
+for (i in 1:length(alphas))
+{
+  ml <- ML_binomial(k, n, alphas[i], betas[i])
+  print(paste("Marginal Likelihood for Beta (", alphas[i], ",", betas[i], ") : ", ml))
+}
+```
+
+### Exercise 2.2 : Estimate the marginal likelihood using Monte Carlo Integration method.
+
+```{r}
+ML_MarkovChain <- function(a, b, k = 2, n = 10, sample_size = 50000, step_size = 0.08) {
+  theta_p <- c(0.4)
+  ML <- 0
+  
+  i <- 2
+  
+  while (i < sample_size) {
+    sample_theta <- rnorm(1, theta_p[i-1], step_size)
+    
+    if (sample_theta > 0 & sample_theta < 1) {
+      post_new <- dbinom(k, n, sample_theta) * dbeta(sample_theta, a, b)
+      post_prev <- dbinom(k, n, theta_p[i-1]) * dbeta(theta_p[i-1], a, b)
+      
+      proposal_density <- (post_new * dnorm(theta_p[i-1], sample_theta, step_size)) /
+                          (post_prev * dnorm(sample_theta, theta_p[i-1], step_size))
+      
+      p_str <- min(1, proposal_density)
+      
+      if (p_str > runif(1, 0, 1)) {
+        theta_p[i] <- sample_theta
+        lkl <- dbinom(k, n, sample_theta) * dbeta(sample_theta, a, b) / dnorm(sample_theta, theta_p[i-1], step_size)
+        
+        ML <- ML + lkl
+        
+        i <- i + 1
+      }
+    }
+  }
+  
+  estimated_ml <- ML / sample_size
+  return(estimated_ml)
+}
+
+```
+
+
+Performing the Markov Chain for all the given priors -
+
+```{r}
+for (i in 1:length(alphas))
+{
+  ml <- ML_MarkovChain(alphas[i], betas[i])
+  print(paste("Marginal Likelihood for Beta (", alphas[i], ",", betas[i], ") : ", ml))
+}
+```
+One Can see that for large values of a and b, Markov Chain method generates very significant errors.
+

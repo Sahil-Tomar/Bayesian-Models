@@ -1,0 +1,393 @@
+---
+title: "CGS698C - Assignment 4"
+author: "Sahil Tomar (210898)"
+date: "2024-07-03"
+output:
+  html_document:
+    mathjax: "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(reshape2)
+library(flextable)
+library(truncnorm)
+library(dplyr)
+library(brms)
+library(bayesplot)
+
+```
+
+# Part 1 : Power posing and testosterone
+
+```{r}
+df_powerpose <- read.table("df_powerpose.csv", header=T, sep=",")
+flextable(head(df_powerpose))
+```
+
+The data set shows the testosterone levels of 39 different individuals, before `(testm1)` and after `(testm2)` treatment, where treatment refers to each individual being assigned to a high power pose or a low power pose `(hptreat)`.
+
+**The research hypothesis is that on average, assigning a subject a high power pose vs. a low power pose will lead to higher testosterone levels after treatment.**
+
+```{r, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
+df_powerpose <- df_powerpose %>%
+  mutate(
+    hptreat_binary = ifelse(hptreat == "High", 1, 0),
+    change_testosterone = testm2 - testm1
+  )
+
+mfit <- brm(
+  formula = change_testosterone ~ hptreat_binary,
+  data = df_powerpose,
+  family = gaussian(),
+  chains = 4, cores = 4,
+  iter = 4000, warmup = 1000,
+  verbose = FALSE
+)
+```
+
+```{r}
+summary(mfit)
+```
+
+The above summary provides the value of the hptreat_binary coefficient ($\beta$) which is the measure of the effect of the variable that encodes the change in testosterone.
+
+The $\alpha$ is mostly in the negative region while $\beta$ is mostly in the positive regions, this suggests that testosterone tends to increase after a high power pose.
+
+```{r}
+mcmc_trace(mfit)
+```
+
+```{r}
+mcmc_hist(mfit, pars=c("b_Intercept", "b_hptreat_binary", "sigma"))
+```
+
+### Prior Sensitivity Analysis
+
+Using the above summary knowledge, these priors are some priors one can check for sensitivity -
+
+```{r, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
+# Define prior specifications for sensitivity analysis
+prior_specs <- list(
+  list(alpha = "normal(-5, 1)", beta = "normal(8, 1)"),
+  list(alpha = "normal(-4, 1)", beta = "normal(8, 1)"),
+  list(alpha = "normal(-5, 2)", beta = "normal(8, 1)"),
+  list(alpha = "normal(-4, 2)", beta = "normal(8, 1)"),
+  list(alpha = "normal(-5, 1)", beta = "normal(9, 1)"),
+  list(alpha = "normal(-4, 1)", beta = "normal(9, 1)"),
+  list(alpha = "normal(-5, 2)", beta = "normal(9, 1)"),
+  list(alpha = "normal(-4, 2)", beta = "normal(9, 1)")
+)
+
+# Initialize an empty data frame to store sensitivity results
+df.sensitivity <- data.frame(matrix(nrow = 0, ncol = 5))
+colnames(df.sensitivity) <- c("prior_alpha", "prior_beta", "mean_beta", "q.lower", "q.upper")
+
+# Fit the model and store results for each prior specification
+for (spec in prior_specs) {
+  # Update priors for alpha and beta
+  priors <- c(
+    set_prior(spec$alpha, class = "Intercept"),
+    set_prior(spec$beta, class = "b", coef = "hptreat_binary"),
+    set_prior("normal(0, 10)", class = "sigma")  # Keep the prior for sigma unchanged
+  )
+  
+  # Fit the model
+  mfit <- brm(
+    formula = change_testosterone ~ hptreat_binary,
+    data = df_powerpose,
+    family = gaussian(),
+    prior = priors,
+    chains = 4,
+    cores = 4,
+    iter = 2000,
+    warmup = 1000,
+    seed = 123  # Set a seed for reproducibility
+  )
+  
+  # Extract posterior samples of beta (hptreat_binary)
+  post_samples <- posterior_samples(mfit)
+  
+  # Calculate mean, lower, and upper quantiles of beta (hptreat_binary)
+  mean_beta <- mean(post_samples$b_hptreat_binary)
+  lower_quantile <- quantile(post_samples$b_hptreat_binary, probs = 0.025)
+  upper_quantile <- quantile(post_samples$b_hptreat_binary, probs = 0.975)
+  
+  # Store results in df.sensitivity
+  df.sensitivity[nrow(df.sensitivity) + 1, ] <- c(
+    spec$alpha,
+    spec$beta,
+    mean_beta,
+    lower_quantile,
+    upper_quantile
+  )
+  
+  # Save the model for each prior specification if needed
+}
+
+
+```
+
+```{r}
+flextable(df.sensitivity)
+```
+
+# Part 2 : Poisson regression models and hypothesis testing
+
+## Exercise 2.1 -
+
+**Implement the model in R or Python such that the function gives the number of crossings as the outcome, and takes sentence length, α, and β as its arguments.**
+
+We are given:
+
+-   The number of crossing dependencies in a sentence can be given by a Poisson distribution - $N_i$ \~ $Poisson(\lambda_i)$
+
+-   where $N_i$ is the number of crossing dependencies in the sentence i
+
+-   $\lambda_i$ is rate parameter indicating the expected rate of crossing dependencies in the sentence i, such that $log \lambda_i = \alpha + \beta L_i$
+
+-   where $L_i$ is the length of the sentence i, $\alpha$ is the expected rate of crossings in a sentence of average length and $\beta$ is the change in rate of crossings as a function of sentence length.
+
+```{r}
+calculate_crossings <- function(sentence_length, alpha, beta) {
+  lambda_i <- exp(alpha + beta * sentence_length)
+  crossings <- rpois(1, lambda_i)
+  return(crossings)
+}
+```
+
+Above function can be used to get the number of crossings as the outcome given the sentence length, α, and β as its arguments.
+
+## Exercise 2.2 -
+
+**Generate prior predictions of the model for sentences of length 4 under the following prior assumptions -**
+
+$\alpha$ \~ $Normal_{lb=0}(0.15, 0.1)$ and $\beta$ \~ $Normal_{lb=0}(0.25, 0.05)$
+
+```{r}
+# Sample alpha from truncated Normal(0.15, 0.1)
+alpha <- rtruncnorm(1000, a = 0, b = Inf, mean = 0.15, sd = 0.1)
+
+# Sample beta from truncated Normal(0.25, 0.05)
+beta <- rtruncnorm(1000, a = 0, b = Inf, mean = 0.25, sd = 0.05)
+
+sentence_length <- 4
+
+prior_crossings <- numeric(length(alpha))
+for (i in 1:length(alpha)) {
+  prior_crossings[i] <- calculate_crossings(sentence_length, alpha[i], beta[i])
+}
+
+# Plotting histogram of prior crossings
+hist(prior_crossings, breaks = 20, col = "skyblue", border = "white", 
+     xlab = "Number of Crossings", main = "Prior Predictions of Crossings")
+
+```
+
+## Exercise 2.3 -
+
+**Consider a dataset of crossing dependencies from English and German corpora, "crossing.csv". This dataset contains number of crossings for each sentence from each language. Fit the following two models,** $M_1$ **and** $M_2$**, to the given data.**
+
+Model $M1$ :
+
+-   Assumption -
+
+    **The rate of crossings is only a function of sentence length and it remains exactly the same in English and German.**
+
+-   Regression - $N_{i,j}$ \~ $Poisson(\lambda_{i,j})$ where $N_{i,j}$ is the number of crossing dependencies in sentence i in language j; $\lambda_{i,j}$ is rate parameter indicating the expected rate of crossing dependencies in sentence i in language j, such that $log(\lambda_{i,j}) = \alpha + \beta L_{ij}$ where $L_{i,j}$ is the length of sentence i of language j.
+
+Model $M2$ :
+
+-   Assumption -
+
+    **As sentence length increases, the number crossings grows at a different rate in English vs. German.**
+
+-   Regression - $N_{i,j}$ \~ $Poisson(\lambda_{i,j})$ where $N_{i,j}$ is the number of crossing dependencies in sentence i in language j; $\lambda_{i,j}$ is rate parameter indicating the expected rate of crossing dependencies in sentence i in language j, such that $log(\lambda_{i,j}) = \alpha + \beta L_{ij} + \beta_{language} R_j + \beta_{interact} L_{i,j}*R_j$ where $L_{i,j}$ is the length of sentence i of language j, $R_j$ is the indicator variable such that $R_j = 0$ if the language is English and $R_j = 1$ if the language is German.
+
+Priors :
+
+-   $\alpha$ \~ $Normal(0.15, 0.1)$
+
+-   $\beta$ \~ $Normal(0,0.15)$
+
+-   $\beta_{language}$ \~ $Normal(0,0.15)$
+
+-   $\beta_{interact}$ \~ $Normal(0,0.15)$
+
+```{r}
+observed <- read.table("crossings.csv", header = T, sep = ",")
+flextable(head(observed))
+nrow(observed)
+```
+
+```{r}
+# Code/center the predictors
+observed$s.length <- observed$s.length - mean(observed$s.length)
+observed$lang <- ifelse(observed$Language=="German",1,0)
+```
+
+```{r, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
+m1.fit <- brm(
+  nCross ~ 1 + s.length,
+  family = poisson(link = "log"),
+  data = observed,
+  prior = c(prior(normal(0.15, 0.1), class = Intercept),
+            prior(normal(0, 0.15), class = b)),
+  cores = 4,
+  verbose = FALSE
+)
+```
+
+```{r}
+summary(m1.fit)
+```
+
+After fitting model $M_1$ using the data we get $\alpha$ - `r fixef(m1.fit)["Intercept",]`
+
+After fitting model $M_1$ using the data we get $\beta$ - `r fixef(m1.fit)["s.length",]`
+
+```{r}
+mcmc_trace(m1.fit)
+```
+
+```{r}
+mcmc_hist(m1.fit, pars = c("b_Intercept", "b_s.length"))
+```
+
+```{r, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
+m2.fit <- brm(
+  nCross ~ 1 + s.length + lang + s.length*lang,
+  family = poisson(link = "log"),
+  data = observed,
+  prior = c(prior(normal(0.15, 0.1), class = Intercept),
+            prior(normal(0, 0.15), class = b)),
+  cores = 4,
+  verbose = FALSE
+)
+```
+
+```{r}
+summary(m2.fit)
+```
+
+After fitting model $M_2$ using the data we get $\alpha$ - `r fixef(m2.fit)["Intercept"]`
+
+After fitting model $M_2$ using the data we get $\beta$ - `r fixef(m2.fit)["s.length"]`
+
+After fitting model $M_2$ using the data we get $\beta_{language}$ - `r fixef(m2.fit)["lang"]`
+
+After fitting model $M_2$ using the data we get $\beta_{interaction}$- `r fixef(m2.fit)["s.length:lang"]`
+
+```{r}
+mcmc_trace(m2.fit)
+```
+
+```{r}
+mcmc_hist(m2.fit, pars = c("b_Intercept", "b_s.length", "b_lang", "b_s.length:lang"))
+```
+
+## Exercise 2.4 -
+
+**Quantify evidence for the models M1 and M2 using k-fold cross-validation.**
+
+```{r}
+observed %>% group_by(Language,s.length) %>%
+  summarise(mean.crossings=mean(nCross)) %>%
+  ggplot(aes(x=s.length,y=mean.crossings,
+             group=Language,color=Language))+
+  geom_point()+geom_line()
+
+```
+
+```{r, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
+# These two vectors will store log predictive desnities
+# in each fold
+lpds.m1 <- c()
+lpds.m2 <- c()
+
+untested <- observed
+
+for(k in 1:5){
+  # Prepare test data and training data
+  ytest <- sample_n(untested,size=nrow(observed)/5)
+  ytrain <- setdiff(observed,ytest)
+
+  untested <- setdiff(untested,ytest)
+# Fit the models M1 and M2 on training data
+  fit.m1 <-
+    brm(nCross ~ 1 + s.length,data=ytrain,
+        family = poisson(link = "log"),
+        prior = c(prior(normal(0.15, 0.1), class = Intercept),
+                  prior(normal(0, 0.15), class = b)),
+        cores=4,
+        verbose = FALSE)
+  fit.m2 <-
+    brm(nCross ~ 1 + s.length + lang + s.length*lang,
+        data=ytrain,
+        family = poisson(link = "log"),
+        prior = c(prior(normal(0.15, 0.1), class = Intercept),
+                  prior(normal(0, 0.15), class = b)),
+        cores=4,
+        verbose = FALSE)
+  # retrieve posterior samples
+  post.m1 <- posterior_samples(fit.m1)
+  post.m2 <- posterior_samples(fit.m2)
+  
+  # Calculate log pointwise predcitive density using test data
+  lppd.m1 <- 0
+  lppd.m2 <- 0
+  for(i in 1:nrow(ytest)){
+    lpd_im1 <- log(mean(dpois(ytest[i,]$nCross,
+                lambda=exp(post.m1[,1]+
+                post.m1[,2]*ytest[i,]$s.length))))
+    lppd.m1 <- lppd.m1 + lpd_im1
+    lpd_im2 <- log(mean(dpois(ytest[i,]$nCross,
+                lambda=exp(post.m2[,1]+
+                post.m2[,2]*ytest[i,]$s.length+
+                  post.m2[,3]*ytest[i,]$lang+
+                  post.m2[,4]*ytest[i,]$s.length*ytest[i,]$lang)
+                  )))
+    lppd.m2 <- lppd.m2 + lpd_im2
+  }
+  lpds.m1 <- c(lpds.m1,lppd.m1)
+  lpds.m2 <- c(lpds.m2,lppd.m2)
+}
+# Predictive accuracy of model M1
+elpd.m1 <- sum(lpds.m1)
+elpd.m1_SE <- sqrt(5*var(lpds.m1))
+
+# Predictive accuracy of model M2
+elpd.m2 <- sum(lpds.m2)
+elpd.m2_SE <- sqrt(5*var(lpds.m2))
+
+# Evidence in favor of M2 over M1
+difference_elpd <- elpd.m2-elpd.m1
+```
+
+```{r}
+elpd.m1
+```
+
+```{r}
+elpd.m1_SE
+```
+
+```{r}
+elpd.m2
+```
+
+```{r}
+elpd.m2_SE
+```
+
+```{r}
+difference_elpd
+```
+
+Conclusions based on the above evidence :
+
+-   Model $M_2$ has a higher ELPD, indicating better predictive accuracy compared to Model $M_1$.
+
+-   The positive difference `(difference_elpd=134.1365)` favors Model $M_2$, suggesting that Model $M_2$ outperforms Model $M_1$ in terms of predictive accuracy.
+
+-   Both models have relatively low standard errors, indicating reasonably precise estimates of their respective ELPD values. However, Model $M_2$ has a slightly lower standard error, suggesting greater confidence in its ELPD estimate compared to Model $M_1$.
